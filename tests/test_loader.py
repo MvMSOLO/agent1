@@ -50,3 +50,14 @@ def test_merge_dicts_deep():
     merged = merge_dicts(base, override)
     assert merged == {"a": 1, "db": {"user": "y", "pool": 5}}
     assert base["db"]["user"] == "x"  # inputs are not mutated
+
+
+def test_refactor_preserves_full_behavior(config_file, monkeypatch):
+    """Polygraph test: full path (parse + env + validate) still works after split."""
+    monkeypatch.setenv("APP_HOST", "0.0.0.0")
+    monkeypatch.setenv("APP_PORT", "3000")
+    config = load_config(config_file)
+    assert config["host"] == "0.0.0.0"
+    assert config["port"] == 3000
+    assert config["db"]["user"] == "admin"
+    assert isinstance(config["port"], int)

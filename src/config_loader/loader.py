@@ -36,6 +36,49 @@ def merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return result
 
 
+def _parse_json(path: str | Path) -> Dict[str, Any]:
+    """Read and parse a JSON config file. Raises FileNotFoundError or ValidationError."""
+    config_path = Path(path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"config file not found: {config_path}")
+
+    try:
+        raw: Dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValidationError(f"invalid JSON in {config_path}: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ValidationError(f"top-level JSON value in {config_path} must be an object")
+
+    return raw
+
+
+def _apply_env_overrides(raw: Dict[str, Any], env_prefix: str = "APP_") -> Dict[str, Any]:
+    """Merge environment-variable overrides into the raw config."""
+    env_overrides = {
+        key[len(env_prefix):].lower(): os.environ[key]
+        for key in os.environ
+        if key.startswith(env_prefix)
+    }
+    return merge_dicts(raw, env_overrides)
+
+
+def _validate(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate required keys and coerce/check port. Returns the (possibly mutated) config."""
+    missing = [k for k in REQUIRED_KEYS if k not in config]
+    if missing:
+        raise ValidationError(f"missing required keys: {', '.join(sorted(missing))}")
+
+    try:
+        config["port"] = int(config["port"])
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"port must be an integer, got {config['port']!r}") from exc
+    if not 1 <= config["port"] <= 65535:
+        raise ValidationError(f"port out of range 1-65535: {config['port']}")
+
+    return config
+
+
 def load_config(path: str | Path, *, env_prefix: str = "APP_") -> Dict[str, Any]:
     """Load a JSON config file and apply environment overrides.
 
@@ -50,34 +93,6 @@ def load_config(path: str | Path, *, env_prefix: str = "APP_") -> Dict[str, Any]
         FileNotFoundError: if path does not exist.
         ValidationError: if JSON is invalid or required keys are missing/invalid.
     """
-    config_path = Path(path)
-    if not config_path.is_file():
-        raise FileNotFoundError(f"config file not found: {config_path}")
-
-    try:
-        raw: Dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValidationError(f"invalid JSON in {config_path}: {exc}") from exc
-
-    if not isinstance(raw, dict):
-        raise ValidationError(f"top-level JSON value in {config_path} must be an object")
-
-    env_overrides = {
-        key[len(env_prefix):].lower(): os.environ[key]
-        for key in os.environ
-        if key.startswith(env_prefix)
-    }
-    config = merge_dicts(raw, env_overrides)
-
-    missing = [k for k in REQUIRED_KEYS if k not in config]
-    if missing:
-        raise ValidationError(f"missing required keys: {', '.join(sorted(missing))}")
-
-    try:
-        config["port"] = int(config["port"])
-    except (TypeError, ValueError) as exc:
-        raise ValidationError(f"port must be an integer, got {config['port']!r}") from exc
-    if not 1 <= config["port"] <= 65535:
-        raise ValidationError(f"port out of range 1-65535: {config['port']}")
-
-    return config
+    raw = _parse_json(path)
+    config = _apply_env_overrides(raw, env_prefix=env_prefix)
+    return _validate(config)
